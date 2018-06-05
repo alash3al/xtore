@@ -1,4 +1,4 @@
-package main
+package xtore
 
 // Document is the row meta data
 type Document struct {

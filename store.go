@@ -1,13 +1,30 @@
-package main
+package xtore
 
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	"strings"
 	"time"
+
+	"github.com/imdario/mergo"
 
 	// the posgres driver
 	_ "github.com/lib/pq"
+)
+
+const (
+	tableSchema = `CREATE TABLE IF NOT EXISTS _store_(
+		_serial		SERIAL,
+		_uuid		UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+		_doc		JSONB,
+		_updatedAt 	INTEGER,
+		_createdAt 	INTEGER,
+
+		INDEX _serial (_serial),
+		INVERTED INDEX _doc (_doc),
+		INDEX _updatedAt (_updatedAt),
+		INDEX _createdAt (_createdAt)
+	)`
 )
 
 // Store handles the store configurations
@@ -15,21 +32,21 @@ type Store struct {
 	db *sql.DB
 }
 
-// NewStore creates new store
-func NewStore(dsn string) (*Store, error) {
+// New creates new store
+func New(dsn string) (*Store, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS _store_(
-		_serial		SERIAL PRIMARY KEY,
-		_uuid		UUID DEFAULT gen_random_uuid(),
-		_doc		JSONB,
-		_updatedAt 	INTEGER,
-		_createdAt 	INTEGER,
+	if _, err := db.Exec(tableSchema); err != nil {
+		return nil, err
+	}
+	return &Store{db}, nil
+}
 
-		INVERTED INDEX _doc (_doc)
-	)`); err != nil {
+// NewUsing create a new instance using the specified sql.DB
+func NewUsing(db *sql.DB) (*Store, error) {
+	if _, err := db.Exec(tableSchema); err != nil {
 		return nil, err
 	}
 	return &Store{db}, nil
@@ -74,8 +91,8 @@ func (s *Store) Update(uuid string, data map[string]interface{}) (*Document, err
 		return nil, err
 	}
 	doc.UpdatedAt = time.Now().Unix()
-	for k, v := range data {
-		doc.Data[k] = v
+	if err := mergo.MergeWithOverwrite(&doc.Data, data); err != nil {
+		return nil, err
 	}
 	jsonData, _ := json.Marshal(doc.Data)
 	_, err = s.db.Exec(
@@ -87,18 +104,35 @@ func (s *Store) Update(uuid string, data map[string]interface{}) (*Document, err
 	return doc, err
 }
 
-func (s *Store) Filter(q *Query) ([]*Document, error) {
-	sql, args := q.Build()
-
-	if sql != "" {
-		sql = fmt.Sprintf("SELECT _serial, _uuid, _doc, _createdAt, _updatedAt FROM _store_ WHERE %s", sql)
-	} else {
-		sql = "SELECT _serial, _uuid, _doc, _createdAt, _updatedAt FROM _store_"
+// Search search the data
+func (s *Store) Search(q *Query) ([]*Document, int64, error) {
+	if q == nil {
+		q = &Query{}
 	}
 
-	rows, err := s.db.Query(sql, args...)
+	_sql := "SELECT _serial, _uuid, _doc, _createdAt, _updatedAt FROM _store_ "
+	_sqlCount := "SELECT COUNT(_serial) FROM _store_ "
+
+	if q.Where != "" {
+		_sql += " WHERE (" + q.Where + ") "
+		_sqlCount += " WHERE (" + q.Where + ") "
+	}
+
+	totals := int64(0)
+
+	s.db.QueryRow(_sqlCount).Scan(&totals)
+
+	if len(q.Order) > 0 {
+		_sql += " ORDER BY " + strings.Join(q.Order, ", ")
+	}
+
+	if q.Paginate != "" {
+		_sql += " " + q.Paginate
+	}
+
+	rows, err := s.db.Query(_sql, q.Args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	docs := []*Document{}
@@ -111,5 +145,5 @@ func (s *Store) Filter(q *Query) ([]*Document, error) {
 		docs = append(docs, doc)
 	}
 
-	return docs, nil
+	return docs, totals, nil
 }
