@@ -105,7 +105,7 @@ func (s *Store) Update(uuid string, data map[string]interface{}) (*Document, err
 }
 
 // Search search the data
-func (s *Store) Search(q *Query) ([]*Document, int64, error) {
+func (s *Store) Search(q *Query) (*Result, error) {
 	if q == nil {
 		q = &Query{}
 	}
@@ -119,6 +119,7 @@ func (s *Store) Search(q *Query) ([]*Document, int64, error) {
 	}
 
 	totals := int64(0)
+	now := time.Now()
 
 	s.db.QueryRow(_sqlCount).Scan(&totals)
 
@@ -132,8 +133,9 @@ func (s *Store) Search(q *Query) ([]*Document, int64, error) {
 
 	rows, err := s.db.Query(_sql, q.Args...)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
+	defer rows.Close()
 
 	docs := []*Document{}
 
@@ -145,5 +147,11 @@ func (s *Store) Search(q *Query) ([]*Document, int64, error) {
 		docs = append(docs, doc)
 	}
 
-	return docs, totals, nil
+	res := &Result{
+		Totals: totals,
+		Hits:   docs,
+		Time:   time.Since(now).Seconds(),
+	}
+
+	return res, nil
 }
