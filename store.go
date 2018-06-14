@@ -121,7 +121,7 @@ func (s *Store) Search(q *Query) (*Result, error) {
 	totals := int64(0)
 	now := time.Now()
 
-	s.db.QueryRow(_sqlCount).Scan(&totals)
+	s.db.QueryRow(_sqlCount, q.Args...).Scan(&totals)
 
 	if len(q.Order) > 0 {
 		_sql += " ORDER BY " + strings.Join(q.Order, ", ")
